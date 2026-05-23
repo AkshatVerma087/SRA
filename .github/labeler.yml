@@ -1,0 +1,24 @@
+backend:
+  - changed-files:
+    - any-glob-to-any-file: 'backend/**'
+
+frontend:
+  - changed-files:
+    - any-glob-to-any-file: 'frontend/**'
+
+cli:
+  - changed-files:
+    - any-glob-to-any-file: 'cli/**'
+
+model:
+  - changed-files:
+    - any-glob-to-any-file: 'model/**'
+
+ci:
+  - changed-files:
+    - any-glob-to-any-file: '.github/**'
+
+docs:
+  - changed-files:
+    - any-glob-to-any-file: 'docs/**'
+    - any-glob-to-any-file: '*.md'

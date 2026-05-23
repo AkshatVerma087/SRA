@@ -127,6 +127,13 @@ SRA implements a **Recursive Versioning Tree**, ensuring that every change is no
 - **JWT Auth**: Secure, stateless authentication using JSON Web Tokens.
 - **Unified API Bridge**: All client-side API interactions are consolidated through the `useAuthFetch` hook, which automatically manages bearer tokens for all requests.
 - **Error Boundaries**: Granular React boundaries to isolate Mermaid rendering or Flowchart failures from the main UI.
+- **Direct Database Backups**: Bypasses transaction poolers (such as PgBouncer on port `6543`) to connect directly to the database via `DIRECT_URL` (port `5432` or custom unpooled port), preventing timeout, connection drops, and lock contention during bulk data operations.
+
+### 🛡️ Quality Gating & Codebase Maintenance
+To maintain code consistency and enforce quality standards automatically across the monorepo, SRA implements a dual-layer validation framework:
+1. **Local Git Quality Gate**: Enforced locally via `pre-commit` hooks. It runs trailing-whitespace trimming, end-of-file newline fixes, YAML verification, large file prevention, and local monorepo ESLint runs (`pnpm lint:all`) prior to committing.
+2. **Remote CI Quality Gate**: GitHub Actions workflow (`pre-commit.yml`) automatically clones, installs dependencies, and runs the same pre-commit validation suite on every Push and Pull Request targeting `main` or `master`.
+3. **Automated PR Path-Based Labeler**: A high-efficiency classification workflow (`pr-labeler.yml` + `.github/labeler.yml`) parses changed file scopes on incoming Pull Requests and dynamically tags them (e.g., `backend`, `frontend`, `cli`, `model`, `ci`, `docs`) to ensure smooth visual organization and review delegation.
 
 ---
 
@@ -138,6 +145,19 @@ The system utilizes a **Prompt Factory** pattern to maintain consistent AI outpu
 2.  **Strict JSON Schemas**: AI outputs are validated against **Zod** schemas before being committed.
 3.  **Benchmark Loops**: Each analysis calculates an `industryScore` based on the 6Cs audit, enabling data-driven refinement.
 4.  **AI Reliability Layer**: Implemented central timeout (360s) and retry policies in `BaseAgent` to handle network jitter and AI service rate-limits gracefully.
+
+### 🧪 Unit Testing Architecture & Dynamic ESM Mocking
+SRA establishes a rigorous, ESM-compliant testing suite powered by **Jest** (`cross-env NODE_OPTIONS=--experimental-vm-modules jest`). Testing in a native ES Module environment introduces read-only binding constraints, which SRA resolves using advanced asynchronous dynamic mock orchestration:
+- **Dynamic ESM Mock Module Isolation**: Since ESM imports are loaded statically at the module start, SRA leverages Jest's `unstable_mockModule` at the absolute top of the test file to mock third-party and native Node APIs (e.g. `child_process`, `fs/promises`).
+- **Default Export Structure Compliance**: To satisfy static default import requirements (e.g., `import fs from 'fs/promises'`), the mocked module explicitly returns a `default` property containing the mock functions, preventing ES Module `SyntaxError` failures.
+- **Mocked Module Resolution**: The mocked modules are subsequently resolved inside the testing context via dynamic `await import` commands before the target test suite executes.
+
+#### Test Coverage Strategy
+1. **JSON Repair Validation (`json_repair.test.js`)**: Tests AI intake and patch recovery by running raw LLM JSON outputs containing trailing commas (arrays and objects), markdown tags (````json ... ````), and inline/block comments (`//` and `/* ... */`) to verify they are perfectly sanitized and parsed into standard objects without data loss. It also validates invalid backslash character escaping.
+2. **Backup Service Reliability (`backup_service.test.js`)**: Validates database backup engine mechanics under varying connection configurations:
+   - Extracts custom unpooled ports (e.g., `6543`) from connections.
+   - Verifies the strict prioritization of `DIRECT_URL` over transaction-pooled connections (`DATABASE_URL`).
+   - Ensures correct command-string assembly containing custom port flags (`-p 6543` / `-p 5432`), host credentials, and database arguments.
 
 ---
 

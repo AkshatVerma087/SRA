@@ -49,12 +49,28 @@ npm run backup:verify --workspace=backend -- <filename>
 # Cleanup old backups
 npm run backup:cleanup --workspace=backend
 ```
-
 #### Required Environment Variables
-- `DATABASE_URL`: PostgreSQL connection string
-- `BACKUP_ENCRYPTION_KEY`: Master key for backup encryption (min 32 characters)
-- `BACKUP_DIR`: Directory for backup storage (default: `./backups`)
-- `BACKUP_RETENTION_DAYS`: Number of days to retain backups (default: 30)
+- `DATABASE_URL`: PostgreSQL connection string (typically transaction-pooled connection on port `6543`).
+- `DIRECT_URL`: Primary direct database connection string (typically unpooled on port `5432`), prioritized by `BackupService` to prevent transaction pooler timeouts or locks during long backup/restore exports.
+- `BACKUP_ENCRYPTION_KEY`: Master key for backup encryption (min 32 characters).
+- `BACKUP_DIR`: Directory for backup storage (default: `./backups`).
+- `BACKUP_RETENTION_DAYS`: Number of days to retain backups (default: 30).
+- `BACKUP_ENCRYPTION_SALT`: Unique salt string used for derived keys during encryption.
+
+#### Direct Connection & Port Extraction Architecture
+The `BackupService` utilizes a robust connection string parsing algorithm:
+1. **Prioritization**: Prioritizes `DIRECT_URL` if present, falling back to `DATABASE_URL` to ensure it targets unpooled database connections.
+2. **Dynamic Port Extraction**: Dynamically parses the connection URI to extract host, user, password, and port parameters. If a port is not explicitly declared, it safely defaults to `5432`.
+3. **Cross-Platform Compatibility (Windows Support)**:
+   - On Unix systems, passwords are fed inline using the standard `PGPASSWORD` environment variable prefix.
+   - On Windows systems, to prevent shell-escaping issues and environment leakage, the service writes a temporary secure password file (`.pgpass`) inside the OS temporary directory (`os.tmpdir()`) with strict mode `0o600`, references it via the `PGPASSFILE` environment variable, runs `pg_dump`/`pg_restore`, and immediately cleans up the temporary file on completion or error.
+
+#### Backup Service Testing & Verification
+The operational stability of our database backup and restore subsystem is verified by the Jest unit test suite (`backup_service.test.js`). The test suite validates the internal backup command string construction logic by mocking external calls using native ES Module dynamics:
+- Verifies extraction of custom port parameters (e.g. `6543` vs. `5432`).
+- Verifies proper prioritizing of direct connection strings (`DIRECT_URL`).
+- Verifies fallback port logic.
+- Verifies secure command argument construction for both Windows (`pgpass`) and Unix (`PGPASSWORD`) runtimes.
 
 ---
 
