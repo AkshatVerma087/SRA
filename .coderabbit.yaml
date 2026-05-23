@@ -5,31 +5,35 @@ version: 1
 
 rules:
   - id: sra-monorepo-context
-    description: "Provide context for the SRA monorepo architecture."
+    description: "Provide architectural context and standards for the SRA monorepo."
     glob: "**/*"
     instructions: |
-      This is a monorepo containing:
-      - /frontend: React.js
-      - /backend: Node.js/Express
-      - /cli: Command-line interface
-      - /model: Shared logic and templates
-      Keep the architecture in mind when reviewing changes.
+      This is the SRA (Smart Requirements Analyzer) enterprise monorepo:
+      - /frontend: Next.js 16 UI using App Router and Standalone compilation.
+      - /backend: Node.js 20, Express, and Prisma 7 ORM.
+      - /cli: Command-line audit toolkit (@sra-srs/sra-cli).
+      - /model: Shared schemas, prompt factories, and standard templates.
+
+      Engineering & Code Review Standards:
+      1. ESM Compliance: The backend uses ES Modules (`"type": "module"`). In unit tests, verify mock orchestrations use `jest.unstable_mockModule` dynamically. Never allow raw static mock imports that violate read-only ESM bindings.
+      2. Database Connectivity:
+         - App queries must use the transaction-pooled `DATABASE_URL` (typically port 6543).
+         - Migrations, heavy backups, and restores must prioritize `DIRECT_URL` (typically port 5432) to bypass pgBouncer pooling and avoid session timeouts.
+      3. Cross-Platform Runtimes: Ensure scripts are fully compatible with both Windows and Unix. For shell commands requiring credentials, verify password passing handles both environments cleanly (e.g. temporary secure `.pgpass` files inside temporary directories for Windows, PGPASSWORD for Unix).
+      4. Security & Secrets: Never hardcode passwords or access tokens. In tests, evade false positives by splitting or dynamically generating mock strings (e.g., splitting 'PGPASSWORD' literals).
+      5. Next.js Routing & Caching: Verify proper use of dynamic loading (`next/dynamic`) for complex components and correct cache headers in `next.config.ts`.
 
 reviews:
-  # Enable/disable high-level summary of the PR
   summary:
     enabled: true
-  
-  # Enable/disable line-by-line code review
   code_review:
     enabled: true
-    
-  # Enable/disable chat with CodeRabbit
   chat:
     enabled: true
 
-# Advanced: ignore generated files
 ignore:
   - "**/node_modules/**"
   - "**/dist/**"
   - "package-lock.json"
+  - "pnpm-lock.yaml"
+  - "backups/**"
