@@ -8,6 +8,8 @@ import { genAI } from '../config/gemini.js';
 // Global token limit for context injection (Layer 5 policy)
 // Increased to 32k tokens to leverage Gemini 2.5 Pro/Flash capacity while staying within Free Tier TPM limits.
 const CONTEXT_TOKEN_LIMIT = 32768;
+const DEFAULT_RETRIEVAL_LIMIT = 5;
+const SIMILARITY_THRESHOLD = 0.25;
 
 /**
  * Retrieves granular knowledge chunks based on semantic similarity and keywords.
@@ -21,7 +23,13 @@ export const retrieveContext = async (queryText, projectId = null, limit = 5) =>
         // 1. Vector Search (Standard RAG)
         const embedding = await embedText(queryText);
         const vectorStr = `[${embedding.join(',')}]`;
+        const parsedLimit = Number(limit);
+        const safeLimit = Number.isFinite(parsedLimit)
+            ? Math.max(1, Math.floor(parsedLimit))
+            : DEFAULT_RETRIEVAL_LIMIT;
 
+        // Over-fetch by 3x to compensate for post-filter attrition from the similarity threshold
+        const overfetchLimit = safeLimit * 3;
         const matches = await prisma.$queryRaw`
             SELECT
                 kc.id,
@@ -38,17 +46,21 @@ export const retrieveContext = async (queryText, projectId = null, limit = 5) =>
             ORDER BY
                 CASE WHEN kc."qualityScore" >= 0.85 THEN 1 ELSE 0 END DESC,
                 kc.embedding <=> ${vectorStr}::vector ASC
-            LIMIT ${limit};
+            LIMIT ${overfetchLimit};
         `;
 
-        const vectorResults = matches.map(m => ({
-            type: m.type,
-            content: m.content,
-            similarity: m.similarity,
-            qualityScore: m.qualityScore,
-            tags: m.tags,
-            sourceTitle: m.source_title
-        }));
+        // Filter out low-relevance results, then cap at the requested limit
+        const vectorResults = matches
+            .filter(m => m.similarity >= SIMILARITY_THRESHOLD)
+            .slice(0, safeLimit)
+            .map(m => ({
+                type: m.type,
+                content: m.content,
+                similarity: m.similarity,
+                qualityScore: m.qualityScore,
+                tags: m.tags,
+                sourceTitle: m.source_title
+            }));
 
         // 2. Graph Retrieval (If Project Context exists)
         if (projectId) {
