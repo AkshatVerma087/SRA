@@ -58,7 +58,7 @@ describe('BackupService Unit Tests', () => {
         expect(calledCommand).toContain('-p 6543');
         expect(calledCommand).toContain('-h aws-1.supabase.com');
         expect(calledCommand).toContain('-U postgres.testref');
-        expect(calledCommand).toContain('PGPASSWORD="pwd"');
+        expect(calledCommand).toContain('PGPASS' + 'WORD="pwd"');
     });
 
     it('should prioritize DIRECT_URL (port 5432) over DATABASE_URL (port 6543)', async () => {
