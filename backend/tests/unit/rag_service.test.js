@@ -56,15 +56,34 @@ describe('RAG Service retrieveContext', () => {
         expect(queryArgs[queryArgs.length - 1]).toBe(5);
     });
 
+    it('floors positive decimals and clamps non-positive limits to 1', async () => {
+        mockQueryRaw.mockResolvedValue([]);
+
+        await retrieveContext('query', null, 3.9);
+        let queryArgs = mockQueryRaw.mock.calls[0];
+        expect(queryArgs[queryArgs.length - 1]).toBe(3);
+
+        mockQueryRaw.mockClear();
+        await retrieveContext('query', null, -4);
+        queryArgs = mockQueryRaw.mock.calls[0];
+        expect(queryArgs[queryArgs.length - 1]).toBe(1);
+    });
+
     it('keeps only matches at or above the similarity threshold', async () => {
         mockQueryRaw.mockResolvedValue([
             { type: 'REQ', content: 'low', similarity: 0.2, qualityScore: 0.9, tags: [], source_title: 'A' },
+            { type: 'REQ', content: 'edge', similarity: 0.25, qualityScore: 0.9, tags: [], source_title: 'Edge' },
             { type: 'REQ', content: 'high', similarity: 0.3, qualityScore: 0.9, tags: [], source_title: 'B' }
         ]);
 
         const result = await retrieveContext('query');
 
         expect(result).toEqual([
+            expect.objectContaining({
+                content: 'edge',
+                similarity: 0.25,
+                sourceTitle: 'Edge'
+            }),
             expect.objectContaining({
                 content: 'high',
                 similarity: 0.3,
