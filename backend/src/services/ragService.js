@@ -27,11 +27,17 @@ export const retrieveContext = async (queryText, projectId = null, limit = 5) =>
         // 1. Vector Search (Standard RAG)
         const embedding = await embedText(queryText);
         const vectorStr = `[${embedding.join(',')}]`;
-        // Normalize and validate the requested limit. Use DEFAULT_RETRIEVAL_LIMIT when input is invalid.
+        // Normalize and validate the requested limit.
+        // - Floor positive decimals (3.9 -> 3)
+        // - Clamp non-positive limits to 1 (-4 -> 1)
+        // - Use DEFAULT_RETRIEVAL_LIMIT when input is invalid (e.g., 'abc')
         const parsedLimit = Math.floor(Number(limit));
-        const safeLimit = (Number.isFinite(parsedLimit) && parsedLimit > 0)
-            ? parsedLimit
-            : DEFAULT_RETRIEVAL_LIMIT;
+        let safeLimit;
+        if (Number.isFinite(parsedLimit)) {
+            safeLimit = parsedLimit <= 0 ? 1 : parsedLimit;
+        } else {
+            safeLimit = DEFAULT_RETRIEVAL_LIMIT;
+        }
 
         // Over-fetch by 3x to compensate for post-filter attrition from the similarity threshold
         const overfetchLimit = safeLimit * 3;
