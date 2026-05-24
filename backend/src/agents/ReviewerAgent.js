@@ -1,5 +1,7 @@
 import { BaseAgent } from './BaseAgent.js';
 import { ReviewSchema } from '../utils/aiSchemas.js';
+import { createReviewSnapshot, stringifyForPrompt } from '../utils/promptCompaction.js';
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from '../utils/llmGenerationConfig.js';
 
 export class ReviewerAgent extends BaseAgent {
   constructor() {
@@ -7,6 +9,7 @@ export class ReviewerAgent extends BaseAgent {
   }
 
   async reviewSRS(originalRequirements, srsJson) {
+    const reviewSnapshot = createReviewSnapshot(originalRequirements, srsJson);
     const prompt = `
 <role>
 You are a Senior QA Lead specializing in IEEE 830-1998 SRS document review. You evaluate whether generated SRS documents faithfully represent the original user requirements while maintaining professional engineering standards.
@@ -59,19 +62,18 @@ Review the generated SRS draft against the original user requirements. Evaluate 
 </examples>
 
 <input>
-Original User Requirements:
-${JSON.stringify(originalRequirements, null, 2)}
-
-Generated SRS Draft:
-${JSON.stringify(srsJson, null, 2)}
+Compact Review Snapshot:
+${stringifyForPrompt(reviewSnapshot)}
 </input>
 
 <output_format>
 Return a valid JSON object matching the following schema. No markdown wrappers.
-${JSON.stringify(ReviewSchema, null, 2)}
+${stringifyForPrompt(ReviewSchema)}
 </output_format>
 `;
 
-    return this.callLLM(prompt, 0.3, true, ReviewSchema);
+    return this.callLLM(prompt, TEMPERATURES.critic, true, ReviewSchema, 3, 5000, {
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.smallJson
+    });
   }
 }

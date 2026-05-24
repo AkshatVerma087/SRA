@@ -11,6 +11,7 @@ import { ReviewerAgent } from '../agents/ReviewerAgent.js';
 import { CriticAgent } from '../agents/CriticAgent.js';
 import { evalService } from './evalService.js';
 import { retrieveContext, formatRagContext } from './ragService.js';
+import { createReviewSnapshot } from '../utils/promptCompaction.js';
 const CACHE_TTL = 3600; // 1 hour in seconds
 
 /** Invalidate the cached dashboard list so the UI reflects mutations immediately. */
@@ -107,8 +108,25 @@ export const performAnalysis = async (userId, text, projectId = null, parentId =
         };
 
         // 3. Developer: Write initial draft (SECTIONAL GENERATION)
+        // M3 FIX: Resolve both system instructions in parallel — each triggers an async
+        // getDiagramAuthorityPrompt() I/O call; running concurrently saves ~1 round-trip.
+        const [developerSystemInstruction, appendicesSystemInstruction] = await Promise.all([
+            devAgent.getSystemInstruction({ projectName, version: promptVersion }),
+            devAgent.getSystemInstruction(
+                { projectName, version: promptVersion },
+                { profile: 'developer', noSchema: true }
+            )
+        ]);
+        const developerPromptSettings = {
+            projectName,
+            version: promptVersion,
+            ragContext,
+            systemInstruction: developerSystemInstruction,
+            appendicesSystemInstruction
+        };
+
         logger.info("--> Agent: Developer (Sectional Generation: Shell)");
-        const srsShell = await devAgent.generateShell(text, poOutput, archOutput, { projectName, version: promptVersion, ragContext });
+        const srsShell = await devAgent.generateShell(text, poOutput, archOutput, developerPromptSettings);
 
         await sleep(3000); // Cooling period
 
@@ -119,7 +137,7 @@ export const performAnalysis = async (userId, text, projectId = null, parentId =
         for (let i = 0; i < featureList.length; i += CHUNK_SIZE) {
             const chunk = featureList.slice(i, i + CHUNK_SIZE);
             logger.info(`    [Features] Processing chunk ${Math.floor(i / CHUNK_SIZE) + 1}/${Math.ceil(featureList.length / CHUNK_SIZE)}`);
-            const featuresOutput = await devAgent.generateFeatures(text, srsShell, poOutput, archOutput, chunk, { projectName, version: promptVersion, ragContext });
+            const featuresOutput = await devAgent.generateFeatures(text, srsShell, poOutput, archOutput, chunk, developerPromptSettings);
             if (featuresOutput.systemFeatures) {
                 allFeatures = [...allFeatures, ...featuresOutput.systemFeatures];
             }
@@ -132,13 +150,13 @@ export const performAnalysis = async (userId, text, projectId = null, parentId =
 
         logger.info("--> Agent: Developer (Sectional Generation: Requirements & Glossary)");
         const sections1And2 = { ...srsShell, systemFeatures: allFeatures };
-        const srsRequirements = await devAgent.generateRequirements(text, sections1And2, poOutput, archOutput, { projectName, version: promptVersion, ragContext });
+        const srsRequirements = await devAgent.generateRequirements(text, sections1And2, poOutput, archOutput, developerPromptSettings);
 
         await sleep(3000); // Cooling period
 
         logger.info("--> Agent: Developer (Sectional Generation: Appendices & Diagrams)");
         const sections123 = { ...sections1And2, ...srsRequirements };
-        const srsAppendices = await devAgent.generateAppendices(text, sections123, poOutput, archOutput, { projectName, version: promptVersion, ragContext });
+        const srsAppendices = await devAgent.generateAppendices(text, sections123, poOutput, archOutput, developerPromptSettings);
 
         // STITCHING: Assemble the final draft
         srsDraft = {
@@ -261,9 +279,13 @@ export const performAnalysis = async (userId, text, projectId = null, parentId =
         };
 
         // 5. Final Evaluation (RAG)
-        logger.info("--> Service: RAG Evaluation");
+        // H3 FIX: Pass a compact review snapshot instead of the full finalSRS object.
+        // The evaluator only needs high-level signals (titles, feature names, scope summary)
+        // to score faithfulness — not the full 40KB+ document.
+        logger.info('--> Service: RAG Evaluation');
         const contextString = typeof archOutput === 'string' ? archOutput : JSON.stringify(archOutput);
-        const ragEval = await evalService.evaluateRAG(text, contextString, finalSRS);
+        const evalSnapshot = createReviewSnapshot(poOutput, finalSRS);
+        const ragEval = await evalService.evaluateRAG(text, contextString, evalSnapshot);
 
         const response = {
             success: true,

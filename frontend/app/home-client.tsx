@@ -13,6 +13,7 @@ import type { Analysis } from "@/types/analysis"
 import { toast } from "sonner"
 
 const ResultsTabs = dynamic(() => import("@/components/results-tabs").then(mod => mod.ResultsTabs), {
+    ssr: false,
     loading: () => <div className="h-[400px] w-full bg-muted/10 animate-pulse rounded-xl" />
 })
 

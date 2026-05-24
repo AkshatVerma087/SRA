@@ -1,6 +1,8 @@
 import { BaseAgent } from './BaseAgent.js';
 import { constructMasterPrompt } from '../utils/prompts.js';
 import { SRSSchema, SRSShellSchema, SRSFeaturesSchema, SRSRequirementsSchema, SRSAppendicesSchema } from '../utils/aiSchemas.js';
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from '../utils/llmGenerationConfig.js';
+import { stringifyForPrompt } from '../utils/promptCompaction.js';
 
 const MERMAID_RULES = `
 <diagram_rules>
@@ -24,17 +26,24 @@ export class DeveloperAgent extends BaseAgent {
     super("Lead Developer");
   }
 
+  async getSystemInstruction(settings = {}, overrides = {}) {
+    const { projectName = "Project", version = "latest" } = settings;
+    return constructMasterPrompt(null, {
+      profile: overrides.profile || "default",
+      projectName,
+      ...(overrides.noSchema && { noSchema: true })
+    }, version);
+  }
+
   /**
    * SECTION 1: generateShell
    * Focuses on Project Metadata, Introduction, and Overall Description.
    */
   async generateShell(rawInput, requirements, architecture, settings = {}) {
     const { projectName = "Project", version = "latest", ragContext = "" } = settings;
-    const masterPrompt = await constructMasterPrompt(null, { profile: "default", projectName }, version);
+    const systemInstruction = settings.systemInstruction || await this.getSystemInstruction({ projectName, version });
 
     const prompt = `
-${masterPrompt}
-
 <role>
 You are the Lead Developer generating the FOUNDATION of an IEEE 830-1998 SRS document. You specialize in translating refined requirements into precise, professional technical prose.
 </role>
@@ -52,8 +61,8 @@ Generate the SRS shell: 'projectTitle', 'revisionHistory', 'introduction', and '
 </constraints>
 
 <context>
-<requirements>${JSON.stringify(requirements, null, 2)}</requirements>
-<architecture>${JSON.stringify(architecture, null, 2)}</architecture>
+<requirements>${stringifyForPrompt(requirements)}</requirements>
+<architecture>${stringifyForPrompt(architecture)}</architecture>
 <historical_patterns>${ragContext || "No historical context available."}</historical_patterns>
 </context>
 
@@ -63,7 +72,10 @@ ${rawInput}
 </input>
 `;
 
-    return this.callLLM(prompt, 0.4, true, SRSShellSchema);
+    return this.callLLM(prompt, TEMPERATURES.developer, true, SRSShellSchema, 3, 5000, {
+      systemInstruction,
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.srsShell
+    });
   }
 
   /**
@@ -72,11 +84,9 @@ ${rawInput}
    */
   async generateFeatures(rawInput, section1, requirements, architecture, featuresChunk, settings = {}) {
     const { projectName = "Project", version = "latest", ragContext = "" } = settings;
-    const masterPrompt = await constructMasterPrompt(null, { profile: "default", projectName }, version);
+    const systemInstruction = settings.systemInstruction || await this.getSystemInstruction({ projectName, version });
 
     const prompt = `
-${masterPrompt}
-
 <role>
 You are the Lead Developer generating detailed IEEE Section 4.x System Features for an SRS document. Each feature must be comprehensive, specific, and production-ready.
 </role>
@@ -95,21 +105,24 @@ Generate system features for ONLY the target features listed below. For each, pr
 </constraints>
 
 <context>
-<foundation>${JSON.stringify(section1)}</foundation>
-<architecture>${JSON.stringify(architecture, null, 2)}</architecture>
+<foundation>${stringifyForPrompt(section1)}</foundation>
+<architecture>${stringifyForPrompt(architecture)}</architecture>
 <historical_patterns>${ragContext || "None"}</historical_patterns>
 </context>
 
 <input>
 Target Features to Document:
-${JSON.stringify(featuresChunk, null, 2)}
+${stringifyForPrompt(featuresChunk)}
 
 Original Raw Description:
 ${rawInput}
 </input>
 `;
 
-    return this.callLLM(prompt, 0.4, true, SRSFeaturesSchema);
+    return this.callLLM(prompt, TEMPERATURES.developer, true, SRSFeaturesSchema, 3, 5000, {
+      systemInstruction,
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.srsFeatures
+    });
   }
 
   /**
@@ -118,11 +131,9 @@ ${rawInput}
    */
   async generateRequirements(rawInput, sections1And2, requirements, architecture, settings = {}) {
     const { projectName = "Project", version = "latest", ragContext = "" } = settings;
-    const masterPrompt = await constructMasterPrompt(null, { profile: "default", projectName }, version);
+    const systemInstruction = settings.systemInstruction || await this.getSystemInstruction({ projectName, version });
 
     const prompt = `
-${masterPrompt}
-
 <role>
 You are the Lead Developer generating the technical requirements sections of an IEEE 830-1998 SRS. This includes External Interface Requirements, Non-Functional Requirements, Other Requirements, and the Glossary.
 </role>
@@ -143,9 +154,9 @@ Generate the NFRs, interface requirements, other requirements, and glossary sect
 ${MERMAID_RULES}
 
 <context>
-<previous_sections>${JSON.stringify(sections1And2)}</previous_sections>
-<requirements>${JSON.stringify(requirements, null, 2)}</requirements>
-<architecture>${JSON.stringify(architecture, null, 2)}</architecture>
+<previous_sections>${stringifyForPrompt(sections1And2)}</previous_sections>
+<requirements>${stringifyForPrompt(requirements)}</requirements>
+<architecture>${stringifyForPrompt(architecture)}</architecture>
 <historical_nfrs>${ragContext || "None"}</historical_nfrs>
 </context>
 
@@ -155,7 +166,10 @@ ${rawInput}
 </input>
 `;
 
-    return this.callLLM(prompt, 0.5, true, SRSRequirementsSchema);
+    return this.callLLM(prompt, TEMPERATURES.developerRequirements, true, SRSRequirementsSchema, 3, 5000, {
+      systemInstruction,
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.srsRequirements
+    });
   }
 
   /**
@@ -164,17 +178,14 @@ ${rawInput}
    * Context: Requires Shell, Features, and Requirements.
    */
   async generateAppendices(rawInput, previousSections, poOutput, architecture, settings = {}) {
-    const { projectName = "Project", version = "latest", ragContext } = settings;
+    const { projectName = "Project", version = "latest" } = settings;
 
-    const masterPrompt = await constructMasterPrompt(null, {
-      profile: "developer",
-      projectName,
-      noSchema: true
-    }, version);
+    const systemInstruction = settings.appendicesSystemInstruction || await this.getSystemInstruction(
+      { projectName, version },
+      { profile: "developer", noSchema: true }
+    );
 
     const prompt = `
-${masterPrompt}
-
 <role>
 You are the Lead Developer generating the Appendices section of an IEEE 830-1998 SRS. This section contains ONLY analysis models (Mermaid diagrams) and the TBD List.
 </role>
@@ -198,17 +209,20 @@ Each diagram must include "syntaxExplanation", "code", and "caption".
 ${MERMAID_RULES}
 
 <context>
-<previous_srs_sections>${JSON.stringify(previousSections, null, 2)}</previous_srs_sections>
-<architecture>${JSON.stringify(architecture, null, 2)}</architecture>
+<previous_srs_sections>${stringifyForPrompt(previousSections)}</previous_srs_sections>
+<architecture>${stringifyForPrompt(architecture)}</architecture>
 </context>
 
 <input>
 Original Raw Description:
-${JSON.stringify(rawInput, null, 2)}
+${rawInput}
 </input>
 `;
 
-    return this.callLLM(prompt, 0.4, true, SRSAppendicesSchema);
+    return this.callLLM(prompt, TEMPERATURES.developer, true, SRSAppendicesSchema, 3, 5000, {
+      systemInstruction,
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.srsAppendices
+    });
   }
 
   async generateSRS(requirements, architecture, settings = {}) {
@@ -220,9 +234,7 @@ ${JSON.stringify(rawInput, null, 2)}
    * Pillar 1: Agentic Reflection
    * Refines a specific TARGET SECTION of an existing SRS draft based on feedback.
    */
-  async refineSRS(rawInput, originalRequirements, originalArchitecture, targetSectionDraft, targetSectionName, feedback, settings = {}) {
-    const { projectName = "Project" } = settings;
-
+  async refineSRS(rawInput, originalRequirements, originalArchitecture, targetSectionDraft, targetSectionName, feedback) {
     const prompt = `
 <role>
 You are the Lead Developer performing SURGICAL REFINEMENT on a specific section of an SRS document. You previously generated this section and are now correcting identified issues.
@@ -243,15 +255,15 @@ Apply all feedback items to the '${targetSectionName}' section. Produce a FULLY 
 ${MERMAID_RULES}
 
 <context>
-<overall_architecture>${JSON.stringify(originalArchitecture, null, 2)}</overall_architecture>
+<overall_architecture>${stringifyForPrompt(originalArchitecture)}</overall_architecture>
 </context>
 
 <input>
 Issues to Fix:
-${JSON.stringify(feedback, null, 2)}
+${stringifyForPrompt(feedback)}
 
 Current '${targetSectionName}' Draft:
-${JSON.stringify(targetSectionDraft, null, 2)}
+${stringifyForPrompt(targetSectionDraft)}
 
 Original Raw Description:
 ${rawInput}
@@ -263,6 +275,8 @@ ${rawInput}
     if (targetSectionName === "Features") schemaToUse = SRSFeaturesSchema;
     if (targetSectionName === "Requirements") schemaToUse = SRSRequirementsSchema;
 
-    return this.callLLM(prompt, 0.4, true, schemaToUse);
+    return this.callLLM(prompt, TEMPERATURES.developer, true, schemaToUse, 3, 5000, {
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.srsRefinement
+    });
   }
 }

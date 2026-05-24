@@ -13,6 +13,10 @@ yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
 
+# Runtime log files
+tmp/*.log
+tmp/*.err.log
+
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 

@@ -22,33 +22,9 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-    const [token, setToken] = useState<string | null>(() => {
-        if (typeof window !== 'undefined') {
-            return localStorage.getItem("token")
-        }
-        return null
-    })
-
-    const [user, setUser] = useState<User | null>(() => {
-        if (typeof window !== 'undefined') {
-            const storedUser = localStorage.getItem("user")
-            if (storedUser) {
-                try {
-                    return JSON.parse(storedUser)
-                } catch (e) {
-                    console.error("Failed to parse cached user", e)
-                }
-            }
-        }
-        return null
-    })
-
-    const [isLoading, setIsLoading] = useState(() => {
-        if (typeof window !== 'undefined') {
-            return !!localStorage.getItem("token")
-        }
-        return true
-    })
+    const [token, setToken] = useState<string | null>(null)
+    const [user, setUser] = useState<User | null>(null)
+    const [isLoading, setIsLoading] = useState(true)
 
     const router = useRouter()
 
@@ -130,6 +106,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             Promise.resolve().then(() => fetchUser(token))
         }
     }, [fetchUser, token])
+
+    useEffect(() => {
+        Promise.resolve().then(() => {
+            const storedToken = localStorage.getItem("token")
+            const storedUser = localStorage.getItem("user")
+
+            if (storedUser) {
+                try {
+                    setUser(JSON.parse(storedUser))
+                } catch (e) {
+                    console.error("Failed to parse cached user", e)
+                }
+            }
+
+            if (storedToken) {
+                setToken(storedToken)
+            } else {
+                setIsLoading(false)
+            }
+        })
+    }, [])
 
     const login = React.useCallback((newToken: string, newRefreshToken: string, newUser: User) => {
         localStorage.setItem("token", newToken)

@@ -1,5 +1,6 @@
 import { BaseAgent } from './BaseAgent.js';
 import { RefinedIntentSchema } from '../utils/aiSchemas.js';
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from '../utils/llmGenerationConfig.js';
 
 export class ProductOwnerAgent extends BaseAgent {
   constructor() {
@@ -55,6 +56,8 @@ User Request:
 </input>
 `;
 
-    return this.callLLM(prompt, 0.7, true, RefinedIntentSchema);
+    return this.callLLM(prompt, TEMPERATURES.productOwner, true, RefinedIntentSchema, 3, 5000, {
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.mediumJson
+    });
   }
 }
