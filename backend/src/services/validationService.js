@@ -209,8 +209,13 @@ export async function validateRequirements(srsData) {
     }
   }
 
+  // Normalize status case to ensure reliable comparison in controllers
+  if (result.validation_status && typeof result.validation_status === 'string') {
+    result.validation_status = result.validation_status.toUpperCase();
+  }
+
   // Pass 2: Filter false positives
-  if (result.issues && result.issues.length > 0) {
+  if (result.issues && Array.isArray(result.issues) && result.issues.length > 0) {
     result.issues = await filterFalsePositives(result.issues);
 
     // If all issues were filtered out, upgrade to PASS
@@ -227,7 +232,7 @@ export async function validateRequirements(srsData) {
       if (severity === 'warning') severity = 'warning';
       if (severity !== 'critical' && severity !== 'warning') severity = 'info';
 
-      const issueContent = `${issue.section_id || 'general'}-${issue.title}-${issue.description.slice(0, 50)}`;
+      const issueContent = `${issue.section_id || 'general'}-${issue.title || 'issue'}-${(issue.description || '').slice(0, 50)}`;
       const deterministicId = `val-${crypto.createHash('md5').update(issueContent).digest('hex').slice(0, 12)}`;
 
       return {
