@@ -69,9 +69,11 @@ export default function RootLayout({
   return (
     <html lang="en" className="scroll-smooth" suppressHydrationWarning>
       <body className={`${inter.variable} ${outfit.variable} font-sans antialiased bg-background text-foreground`}>
-        <Providers>{children}</Providers>
-        <VitalsMonitor />
-        <Toaster closeButton />
+        <Providers>
+          {children}
+          <VitalsMonitor />
+          <Toaster closeButton />
+        </Providers>
       </body>
     </html>
   )

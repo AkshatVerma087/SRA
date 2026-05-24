@@ -1,5 +1,7 @@
 import { ALIGNMENT_CHECK_PROMPT } from '../utils/prompts.js';
 import { analyzeText } from './aiService.js';
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from '../utils/llmGenerationConfig.js';
+import { stringifyForPrompt } from '../utils/promptCompaction.js';
 
 /**
  * Lints requirements to calculate a quality score and identify issues.
@@ -11,8 +13,8 @@ export const lintRequirements = (analysis, semanticAudit = null) => {
     const issues = [];
 
     if (semanticAudit) {
-        // Use Semantic Audit scores (0.0 - 1.0) scaled to 100
-        score = Math.round(semanticAudit.overallScore * 100);
+        // overallScore is already 0-100 (not 0-1). No multiplication needed.
+        score = Math.round(semanticAudit.overallScore);
         if (semanticAudit.criticalIssues) {
             issues.push(...semanticAudit.criticalIssues.map(i => `[CRITICAL] ${i}`));
         }
@@ -132,18 +134,19 @@ export const checkAlignment = async (originalInput, validationContext, srsOutput
         .replace('{{rawInput}}', originalInput.rawText || "N/A")
         .replace('{{domain}}', validationContext.domain || "General Software")
         .replace('{{purpose}}', validationContext.purpose || "Not Specified")
-        .replace('{{srsContent}}', JSON.stringify(srsOutput, null, 2));
+        .replace('{{srsContent}}', 'The generated SRS content is provided in the user input.');
 
     // Pass the raw input as the message text
     const text = (originalInput.rawText || "").slice(0, 5000) +
         "\n\nSRS CONTENT FOR VERIFICATION:\n" +
-        JSON.stringify(srsOutput).slice(0, 15000);
+        stringifyForPrompt(srsOutput, 15000);
 
     // Call AI
     const response = await analyzeText(text, {
         modelName: process.env.GEMINI_MODEL_NAME || 'gemini-2.5-flash',
         systemPrompt: systemPrompt,
-        temperature: 0.0 // Strict logic
+        temperature: TEMPERATURES.logic,
+        maxOutputTokens: OUTPUT_TOKEN_LIMITS.smallJson
     });
 
     if (!response || response.success === false || !response.srs) {

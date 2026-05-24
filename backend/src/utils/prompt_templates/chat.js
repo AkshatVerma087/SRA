@@ -36,4 +36,25 @@ Return ONLY the raw JSON. Do not include markdown wrappers (\`\`\`json) or any i
 
 - If "updatedAnalysis" is updated, it must be the ENTIRE COMPLETE object with all fields retained. Do not use partial updates.
 </output_format>
+
+<examples>
+<example>
+<user_message>Can you explain the main security requirements?</user_message>
+<output>
+{
+  "reply": "The current analysis requires authenticated access, role-aware authorization, and protection of sensitive project data. No changes were made because you asked for an explanation only.",
+  "updatedAnalysis": null
+}
+</output>
+</example>
+<example>
+<user_message>Rename the project to Campus Helpdesk and add a requirement for ticket priority.</user_message>
+<output>
+{
+  "reply": "I renamed the project and added a traceable ticket priority requirement while preserving the rest of the analysis.",
+  "updatedAnalysis": { "...": "COMPLETE UPDATED ANALYSIS OBJECT WITH ALL EXISTING FIELDS RETAINED" }
+}
+</output>
+</example>
+</examples>
 `;

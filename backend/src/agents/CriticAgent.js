@@ -1,5 +1,7 @@
 import { BaseAgent } from './BaseAgent.js';
 import { AuditSchema } from '../utils/aiSchemas.js';
+import { createReviewSnapshot, stringifyForPrompt } from '../utils/promptCompaction.js';
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from '../utils/llmGenerationConfig.js';
 
 /**
  * Critic Agent (Requirements Auditor)
@@ -12,6 +14,7 @@ export class CriticAgent extends BaseAgent {
     }
 
     async auditSRS(originalRequirements, srsContent) {
+        const reviewSnapshot = createReviewSnapshot(originalRequirements, srsContent);
         const prompt = `
 <role>
 You are a Senior Requirements Auditor specializing in IEEE 830-1998 compliance and the 6Cs quality framework (Clarity, Completeness, Conciseness, Consistency, Correctness, Context). You evaluate SRS documents for production readiness.
@@ -59,20 +62,19 @@ Audit the generated SRS draft against the original user requirements. Score each
 </examples>
 
 <input>
-Original User Requirements:
-${JSON.stringify(originalRequirements, null, 2)}
-
-Generated SRS Draft:
-${JSON.stringify(srsContent, null, 2)}
+Compact Review Snapshot:
+${stringifyForPrompt(reviewSnapshot)}
 </input>
 
 <output_format>
 Return a valid JSON object matching the following schema. No markdown wrappers.
-${JSON.stringify(AuditSchema, null, 2)}
+${stringifyForPrompt(AuditSchema)}
 </output_format>
 `;
 
-        const auditResult = await this.callLLM(prompt, 0.3, true, AuditSchema);
+        const auditResult = await this.callLLM(prompt, TEMPERATURES.critic, true, AuditSchema, 3, 5000, {
+            maxOutputTokens: OUTPUT_TOKEN_LIMITS.smallJson
+        });
         return auditResult;
     }
 }

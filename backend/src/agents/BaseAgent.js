@@ -1,6 +1,7 @@
 import { genAI } from '../config/gemini.js';
 import { jsonrepair } from 'jsonrepair';
 import logger from '../config/logger.js';
+import { OUTPUT_TOKEN_LIMITS } from '../utils/llmGenerationConfig.js';
 
 export class BaseAgent {
     constructor(name, modelName = process.env.GEMINI_MODEL_NAME || "gemini-3-flash-preview") {
@@ -9,7 +10,7 @@ export class BaseAgent {
         // Default models will be overridden in analysisService based on tiering
     }
 
-    async callLLM(prompt, temperature = 0.7, jsonMode = true, responseSchema = null, retries = 3, initialDelay = 5000) {
+    async callLLM(prompt, temperature = 0.7, jsonMode = true, responseSchema = null, retries = 3, initialDelay = 5000, options = {}) {
         logger.debug({ msg: `[${this.name}] Calling LLM`, model: this.modelName });
 
         if (process.env.MOCK_AI === 'true') {
@@ -67,9 +68,10 @@ export class BaseAgent {
             try {
                 const model = genAI.getGenerativeModel({
                     model: this.modelName,
+                    ...(options.systemInstruction && { systemInstruction: options.systemInstruction }),
                     generationConfig: {
                         temperature,
-                        maxOutputTokens: 65535,
+                        maxOutputTokens: options.maxOutputTokens || OUTPUT_TOKEN_LIMITS.mediumJson,
                         responseMimeType: jsonMode ? "application/json" : "text/plain",
                         ...(responseSchema && { responseSchema })
                     }

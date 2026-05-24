@@ -1,5 +1,7 @@
 import { analyzeText } from "./aiService.js";
 import logger from "../config/logger.js";
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from "../utils/llmGenerationConfig.js";
+import { stringifyForPrompt } from "../utils/promptCompaction.js";
 
 /**
  * Surgical Refine Service — Layer 4
@@ -56,7 +58,7 @@ export async function surgicalRefine(currentSRS, improvementNotes, affectedSecti
 
     const userPrompt = `
 [CURRENT_SRS_START]
-${JSON.stringify(currentSRS, null, 2)}
+${stringifyForPrompt(currentSRS)}
 [CURRENT_SRS_END]
 
 [USER_FEEDBACK_START]
@@ -78,7 +80,8 @@ Apply the user's feedback as a surgical edit. Return ONLY the modified sections 
             const response = await analyzeText(userPrompt, {
                 modelName: process.env.GEMINI_MODEL_NAME || 'gemini-2.5-flash',
                 systemPrompt: SURGICAL_REFINE_PROMPT,
-                temperature: 0.3,
+                temperature: TEMPERATURES.critic,
+                maxOutputTokens: OUTPUT_TOKEN_LIMITS.srsRefinement,
                 zodSchema: null
             });
 

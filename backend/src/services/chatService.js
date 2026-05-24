@@ -1,17 +1,27 @@
-import { genAI } from "../config/gemini.js";
-import { CHAT_PROMPT } from "../utils/prompts.js";
-import prisma from "../config/prisma.js";
+import { ChatAgent } from '../agents/ChatAgent.js';
+import prisma from '../config/prisma.js';
+import { createChatSnapshot } from '../utils/promptCompaction.js';
+import logger from '../config/logger.js';
 
+/**
+ * Processes a single chat turn for an analysis session.
+ *
+ * Token-efficiency improvements:
+ *  - Uses ChatAgent (extends BaseAgent) instead of a raw genAI call,
+ *    eliminating ~40 lines of duplicated retry/timeout/JSON-repair logic.
+ *  - Injects a compact SRS snapshot (createChatSnapshot) instead of the full
+ *    resultJson, cutting prompt size from 50KB+ down to ~6-8KB per turn.
+ */
 export async function processChat(userId, analysisId, userMessage) {
-    // 1. Fetch current analysis to get context
+    // 1. Fetch current analysis for context
     const currentAnalysis = await prisma.analysis.findUnique({
         where: { id: analysisId }
     });
 
-    if (!currentAnalysis) throw new Error("Analysis not found");
-    if (currentAnalysis.userId !== userId) throw new Error("Unauthorized");
+    if (!currentAnalysis) throw new Error('Analysis not found');
+    if (currentAnalysis.userId !== userId) throw new Error('Unauthorized');
 
-    // 2. Fetch full chat history for context across versions
+    // 2. Fetch conversation history across all versions in the same root chain
     const rootId = currentAnalysis.rootId || currentAnalysis.id;
     const chainAnalyses = await prisma.analysis.findMany({
         where: {
@@ -27,161 +37,90 @@ export async function processChat(userId, analysisId, userMessage) {
     const history = await prisma.chatMessage.findMany({
         where: { analysisId: { in: chainIds } },
         orderBy: { createdAt: 'asc' },
-        // maximize context within reason, maybe last 20 messages?
-        take: 20
+        take: 20 // last 20 messages for rolling context window
     });
 
-    // 3. Prepare Prompt
-    const historyText = history.map(msg => `${msg.role}: ${msg.content}`).join("\n");
-    const fullPrompt = `
-${CHAT_PROMPT}
-${JSON.stringify(currentAnalysis.resultJson, null, 2)}
+    const historyText = history.map(msg => `${msg.role}: ${msg.content}`).join('\n');
 
-CHAT HISTORY:
-${historyText}
+    // 3. Build compact SRS snapshot — avoids serialising the full 50KB+ resultJson
+    //    into every chat turn. createChatSnapshot targets ~6-8K tokens max.
+    const srsSnapshot = createChatSnapshot(currentAnalysis.resultJson || {});
 
-User: ${userMessage}
-`;
+    // 4. Delegate to ChatAgent (inherits BaseAgent retry/timeout/JSON-repair)
+    const chatAgent = new ChatAgent();
+    let parsedResponse;
 
-    // 4. Call Gemini (with retry logic)
-    let outputText;
     if (process.env.MOCK_AI === 'true') {
-        outputText = JSON.stringify({
-            reply: "Mocked AI Reply",
+        parsedResponse = {
+            reply: 'Mocked AI Reply',
             updatedAnalysis: {
-                projectTitle: "Mocked V2",
-                functionalRequirements: ["New Reqs"],
+                projectTitle: 'Mocked V2',
+                functionalRequirements: ['New Reqs'],
                 nonFunctionalRequirements: [],
                 userStories: []
             }
-        });
+        };
     } else {
-        const modelName = process.env.GEMINI_MODEL_NAME || "gemini-2.5-flash";
-        const model = genAI.getGenerativeModel({ model: modelName });
-
-        let attempt = 0;
-        const maxRetries = 3;
-        let delay = 2000;
-
-        while (attempt < maxRetries) {
-            try {
-                const result = await model.generateContent(fullPrompt);
-                outputText = result.response.text();
-                break;
-            } catch (err) {
-                attempt++;
-                const isRetryable = err.message?.includes("429") || err.message?.includes("503") || err.message?.includes("fetch failed") || err.message?.includes("ECONNREFUSED");
-
-                if (isRetryable && attempt < maxRetries) {
-                    console.warn(`[Chat Service] Retryable error (${err.message}). Retry ${attempt}/${maxRetries} in ${delay}ms...`);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                    delay *= 2;
-                    continue;
-                }
-                throw err;
-            }
-        }
-
-        if (!outputText) {
-            throw new Error("[Chat Service] All retry attempts exhausted.");
-        }
+        parsedResponse = await chatAgent.chat(srsSnapshot, historyText, userMessage);
     }
 
-    // 51. Clean markdown
-    outputText = outputText.replace(/```json/g, "").replace(/```/g, "").trim();
-
-    let parsedResponse;
-    try {
-        // Try direct parse first
-        parsedResponse = JSON.parse(outputText);
-    } catch (e) {
-        // If direct parse fails, try to find the JSON object using regex
-        const jsonMatch = outputText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            try {
-                parsedResponse = JSON.parse(jsonMatch[0]);
-            } catch (innerErr) {
-                console.error("Failed to parse extracted JSON:", jsonMatch[0]);
-                parsedResponse = { reply: outputText, updatedAnalysis: null };
-            }
-        } else {
-            console.error("Failed to parse chat response (no JSON found):", outputText);
-            parsedResponse = { reply: outputText, updatedAnalysis: null };
-        }
-    }
-
-    // 5. Save User Message
+    // 5. Persist the conversation turn
     await prisma.chatMessage.create({
-        data: {
-            analysisId,
-            role: "user",
-            content: userMessage
-        }
+        data: { analysisId, role: 'user', content: userMessage }
+    });
+    await prisma.chatMessage.create({
+        data: { analysisId, role: 'assistant', content: parsedResponse.reply }
     });
 
-    // 6. Save AI Message
-    await prisma.chatMessage.create({
-        data: {
-            analysisId,
-            role: "assistant",
-            content: parsedResponse.reply
-        }
-    });
-
+    // 6. If the AI returned an updated analysis, create a new versioned record
     let newAnalysisId = null;
 
-    // 7. Handle Updates
     if (parsedResponse.updatedAnalysis) {
-        // Create NEW version with Transaction
         await prisma.$transaction(async (tx) => {
-            let rootId = currentAnalysis.rootId;
-            // If the current analysis didn't have a rootId (legacy), it is its own root.
-            // BUT for consistency, if we are branching from it, we should probably set the new one's rootId to the currentAnalysis.id.
-            // AND update the OLD one to have rootId = id? No, that's messy side effect.
-            // Better: If parent has no rootId, assume parent is root.
-            if (!rootId) {
-                rootId = currentAnalysis.id;
-                // Ideally we should backfill the parent's rootId, but let's just treat it as the root for the new child.
+            let effectiveRootId = currentAnalysis.rootId;
+            if (!effectiveRootId) {
+                // Legacy: treat parent as root for the new child
+                effectiveRootId = currentAnalysis.id;
             }
 
-            // Find max version for this root
             const maxVersionAgg = await tx.analysis.findFirst({
-                where: { rootId },
+                where: { rootId: effectiveRootId },
                 orderBy: { version: 'desc' },
                 select: { version: true }
             });
             const version = (maxVersionAgg?.version || 0) + 1;
-
             const title = parsedResponse.updatedAnalysis.projectTitle || `Version ${version}`;
 
             const newAnalysis = await tx.analysis.create({
                 data: {
                     userId,
-                    inputText: currentAnalysis.inputText, // Keep original input or maybe append user request? Keeping original for now.
+                    inputText: currentAnalysis.inputText,
                     resultJson: parsedResponse.updatedAnalysis,
                     version,
                     title,
-
-                    rootId,
+                    rootId: effectiveRootId,
                     parentId: currentAnalysis.id,
                     metadata: {
                         trigger: 'chat',
                         source: 'ai',
                         promptSettings: {
                             ...(currentAnalysis.metadata?.promptSettings || {}),
-                            // Ensure model info is carried over or defaults
-                            modelName: currentAnalysis.metadata?.promptSettings?.modelName || process.env.GEMINI_MODEL_NAME || "gemini-3-flash-preview",
-                            modelProvider: currentAnalysis.metadata?.promptSettings?.modelProvider || "google"
+                            modelName: currentAnalysis.metadata?.promptSettings?.modelName
+                                || process.env.GEMINI_MODEL_NAME
+                                || 'gemini-3-flash-preview',
+                            modelProvider: currentAnalysis.metadata?.promptSettings?.modelProvider || 'google'
                         }
                     }
                 }
             });
             newAnalysisId = newAnalysis.id;
         });
+
+        logger.info(`[Chat Service] Created new analysis version ${newAnalysisId} from chat edit.`);
     }
 
     return {
         reply: parsedResponse.reply,
-        newAnalysisId // If present, frontend should redirect/refresh
+        newAnalysisId // If present, frontend should redirect/refresh to the new version
     };
 }

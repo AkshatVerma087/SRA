@@ -1,8 +1,9 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { jsonrepair } from 'jsonrepair';
+import { genAI } from '../config/gemini.js';
 import prisma from '../config/prisma.js';
 import { CODE_GEN_PROMPT } from '../utils/prompts.js';
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from '../utils/llmGenerationConfig.js';
+import { stringifyForPrompt } from '../utils/promptCompaction.js';
 
 /**
  * Robustly extracts the FIRST valid JSON object from a string,
@@ -62,10 +63,15 @@ export const generateCodeFromAnalysis = async (userId, analysisId) => {
     // Using configurable model name (defaulting to Gemini 3 Flash)
     const model = genAI.getGenerativeModel({
         model: process.env.GEMINI_MODEL_NAME || "gemini-2.5-flash",
-        generationConfig: { responseMimeType: "application/json" }
+        systemInstruction: CODE_GEN_PROMPT.replace('{{srsJson}}', 'The SRS JSON is provided in the user input.'),
+        generationConfig: {
+            responseMimeType: "application/json",
+            temperature: TEMPERATURES.developer,
+            maxOutputTokens: OUTPUT_TOKEN_LIMITS.srsRefinement
+        }
     });
 
-    const prompt = CODE_GEN_PROMPT.replace('{{srsJson}}', JSON.stringify(analysis.resultJson, null, 2));
+    const prompt = `<srs_json>${stringifyForPrompt(analysis.resultJson)}</srs_json>`;
 
     // 3. Call AI
     const result = await model.generateContent(prompt);
@@ -78,7 +84,7 @@ export const generateCodeFromAnalysis = async (userId, analysisId) => {
     let generatedCode;
     try {
         // First try standard parse (fastest)
-        generatedCode = JSON.parse(text);
+        generatedCode = JSON.parse(jsonrepair(text));
     } catch (e) {
         console.warn("Direct JSON parse failed, attempting robust extraction...");
 

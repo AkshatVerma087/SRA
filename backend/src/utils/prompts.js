@@ -4,6 +4,7 @@ import logger from '../config/logger.js';
 import * as v1 from './versions/v1_0_0.js';
 import * as v1_1 from './versions/v1_1_0.js';
 import * as v2 from './versions/v2_0_0.js';
+import * as v2_1 from './versions/v2_1_0.js';
 
 import { DIAGRAM_AUTHORITY_PROMPT } from './prompt_templates/diagram_authority.js';
 import { CHAT_PROMPT } from './prompt_templates/chat.js';
@@ -15,9 +16,13 @@ import { DFD_STRUCT_GEN_PROMPT } from './prompt_templates/dfd_struct_gen.js';
 
 
 // 1. REGISTER VERSIONS
+// NOTE: v2_0_0 is kept registered for explicit backward-compatible version selection via API
+// (e.g. promptVersion: "2.0.0"). It is NOT the active default — getLatestVersion() uses
+// semver sorting and will always resolve to v2_1_0 or higher. Do NOT remove it.
 registerPromptVersion('1.0.0', v1.generate);
 registerPromptVersion('1.1.0', v1_1.generate);
-registerPromptVersion('2.0.0', v2.generate);
+registerPromptVersion('2.0.0', v2.generate);   // Legacy — 25KB, kept for API compatibility
+registerPromptVersion('2.1.0', v2_1.generate); // Active default — optimised 11KB
 
 // 2. CENTRAL FACTORY
 // Now ASYNC because generators allow I/O

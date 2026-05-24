@@ -1,9 +1,10 @@
 import { BaseAgent } from './BaseAgent.js';
-import { retrieveContext, formatRagContext } from '../services/ragService.js';
 import { constructMasterPrompt } from '../utils/prompts.js';
-import { ArchitectSchema, ArchitectFoundationSchema, ArchitectDataSchema, ArchitectPrinciplesSchema } from '../utils/aiSchemas.js';
+import { ArchitectFoundationSchema, ArchitectDataSchema, ArchitectPrinciplesSchema } from '../utils/aiSchemas.js';
 import { SchemaType } from "@google/generative-ai";
 import logger from '../config/logger.js';
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from '../utils/llmGenerationConfig.js';
+import { stringifyForPrompt } from '../utils/promptCompaction.js';
 
 const QUERY_EXPANSION_PROMPT = `
 <role>
@@ -48,26 +49,35 @@ export class ArchitectAgent extends BaseAgent {
         },
         required: ["queries"]
       };
-      const result = await this.callLLM(prompt, 0.5, true, querySchema);
+      const result = await this.callLLM(prompt, TEMPERATURES.architect, true, querySchema, 3, 5000, {
+        maxOutputTokens: OUTPUT_TOKEN_LIMITS.smallJson
+      });
       return result.queries || [featureList.substring(0, 100)];
-    } catch (e) {
+    } catch {
       return [featureList.substring(0, 100)];
     }
   }
 
   async designSystem(poOutput, settings = {}) {
-    const { projectName = "Project", projectId = null, version = "latest" } = settings;
+    const { projectName = "Project", version = "latest" } = settings;
 
     logger.info(`[Architect] Blueprinting Product Architecture (Sectional Approach)...`);
 
+    const systemInstruction = await constructMasterPrompt(null, {
+      profile: "system_architect",
+      projectName,
+      noSchema: true
+    }, version);
+    const agentSettings = { ...settings, systemInstruction };
+
     // 1. System Components
-    const components = await this.analyzeSystemComponents(poOutput, settings);
+    const components = await this.analyzeSystemComponents(poOutput, agentSettings);
 
     // 2. Logical Data Model
-    const model = await this.modelEntities(poOutput, components, settings);
+    const model = await this.modelEntities(poOutput, components, agentSettings);
 
     // 3. Technical Principles
-    const principles = await this.identifyPrinciples(poOutput, components, model, settings);
+    const principles = await this.identifyPrinciples(poOutput, components, model, agentSettings);
 
     return {
       ...components,
@@ -77,16 +87,9 @@ export class ArchitectAgent extends BaseAgent {
   }
 
   async analyzeSystemComponents(poOutput, settings = {}) {
-    const { projectName = "Project", version = "latest", ragContext = "" } = settings;
-    const masterPrompt = await constructMasterPrompt(null, {
-      profile: "system_architect",
-      projectName,
-      noSchema: true
-    }, version);
+    const { ragContext = "", systemInstruction } = settings;
 
     const prompt = `
-${masterPrompt}
-
 <role>
 You are the Principal Systems Engineer focused on Product Architecture. You identify core logical components and subsystems that form the product's structural backbone.
 </role>
@@ -108,25 +111,21 @@ Identify the core logical components or subsystems of the product (e.g., UI Shel
 
 <input>
 High-Level Requirements:
-${JSON.stringify(poOutput, null, 2)}
+${stringifyForPrompt(poOutput)}
 </input>
 `;
 
     logger.info(`[Architect] Analyzing System Components (1/3)...`);
-    return this.callLLM(prompt, 0.4, true, ArchitectFoundationSchema);
+    return this.callLLM(prompt, TEMPERATURES.architect, true, ArchitectFoundationSchema, 3, 5000, {
+      systemInstruction,
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.architectSection
+    });
   }
 
   async modelEntities(poOutput, components, settings = {}) {
-    const { projectName = "Project", version = "latest", ragContext = "" } = settings;
-    const masterPrompt = await constructMasterPrompt(null, {
-      profile: "system_architect",
-      projectName,
-      noSchema: true
-    }, version);
+    const { ragContext = "", systemInstruction } = settings;
 
     const prompt = `
-${masterPrompt}
-
 <role>
 You are the Data Architect focused on logical Product Information Models. You design technology-agnostic data structures that capture the product's core domain.
 </role>
@@ -143,31 +142,27 @@ Define the core logical entities (data objects), their necessary attributes, and
 </constraints>
 
 <context>
-<system_components>${JSON.stringify(components, null, 2)}</system_components>
+<system_components>${stringifyForPrompt(components)}</system_components>
 <historical_patterns>${ragContext}</historical_patterns>
 </context>
 
 <input>
 High-Level Requirements:
-${JSON.stringify(poOutput, null, 2)}
+${stringifyForPrompt(poOutput)}
 </input>
 `;
 
     logger.info(`[Architect] Modeling Product Entities (2/3)...`);
-    return this.callLLM(prompt, 0.4, true, ArchitectDataSchema);
+    return this.callLLM(prompt, TEMPERATURES.architect, true, ArchitectDataSchema, 3, 5000, {
+      systemInstruction,
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.architectSection
+    });
   }
 
   async identifyPrinciples(poOutput, components, model, settings = {}) {
-    const { projectName = "Project", version = "latest", ragContext = "" } = settings;
-    const masterPrompt = await constructMasterPrompt(null, {
-      profile: "system_architect",
-      projectName,
-      noSchema: true
-    }, version);
+    const { ragContext = "", systemInstruction } = settings;
 
     const prompt = `
-${masterPrompt}
-
 <role>
 You are the Principal Architect focused on Product Technical Principles. You identify the non-functional necessities that govern how the product must behave at a systemic level.
 </role>
@@ -184,18 +179,21 @@ Identify high-level architectural principles, constraints, and non-functional ne
 </constraints>
 
 <context>
-<system_components>${JSON.stringify(components, null, 2)}</system_components>
-<entity_model>${JSON.stringify(model, null, 2)}</entity_model>
+<system_components>${stringifyForPrompt(components)}</system_components>
+<entity_model>${stringifyForPrompt(model)}</entity_model>
 <historical_patterns>${ragContext}</historical_patterns>
 </context>
 
 <input>
 High-Level Requirements:
-${JSON.stringify(poOutput, null, 2)}
+${stringifyForPrompt(poOutput)}
 </input>
 `;
 
     logger.info(`[Architect] Identifying Product Principles (3/3)...`);
-    return this.callLLM(prompt, 0.4, true, ArchitectPrinciplesSchema);
+    return this.callLLM(prompt, TEMPERATURES.architect, true, ArchitectPrinciplesSchema, 3, 5000, {
+      systemInstruction,
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.architectSection
+    });
   }
 }

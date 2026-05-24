@@ -5,6 +5,7 @@ import { openai } from "../config/openai.js";
 import { AnalysisResultSchema } from "../utils/schemas.js";
 import { sanitizePII } from "../utils/sanitizer.js";
 import logger from "../config/logger.js";
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from "../utils/llmGenerationConfig.js";
 
 import { retrieveContext, formatRagContext } from "./ragService.js";
 
@@ -27,9 +28,6 @@ export async function analyzeText(text, settings = {}) {
     // If a specific task-based system prompt is provided, use it directly
     masterPrompt = systemPrompt;
     finalPrompt = `
-System Context:
-${masterPrompt}
-
 <input>
 User Input Data:
 ${text}
@@ -134,21 +132,26 @@ ${text}
           throw new Error("OpenAI API Key is missing. Please configure OPENAI_API_KEY in .env.");
         }
         const completion = await callWithTimeout(openai.chat.completions.create({
-          messages: [{ role: "system", content: masterPrompt }, { role: "user", content: text }],
+          messages: [
+            { role: "system", content: masterPrompt || "Return valid JSON that satisfies the requested task." },
+            { role: "user", content: systemPrompt ? text : finalPrompt }
+          ],
           model: modelName,
-          temperature: 0.7,
+          temperature: settings.temperature ?? TEMPERATURES.developer,
           response_format: targetSchema ? { type: "json_object" } : undefined
         }), timeoutMs);
         output = completion.choices[0].message.content;
       } else {
         const model = genAI.getGenerativeModel({
           model: modelName || process.env.GEMINI_MODEL_NAME || "gemini-3-flash-preview",
+          ...(masterPrompt && { systemInstruction: masterPrompt }),
           generationConfig: {
             responseMimeType: "application/json",
-            temperature: settings.temperature || 0.7
+            temperature: settings.temperature ?? TEMPERATURES.developer,
+            maxOutputTokens: settings.maxOutputTokens || OUTPUT_TOKEN_LIMITS.mediumJson
           }
         });
-        const result = await callWithTimeout(model.generateContent(finalPrompt), timeoutMs);
+        const result = await callWithTimeout(model.generateContent(systemPrompt ? text : finalPrompt), timeoutMs);
 
         if (result && result.response && typeof result.response.text === "function") {
           output = result.response.text();
@@ -286,7 +289,13 @@ ${error.includes("Trying to inactivate an inactive participant") ? "CRITICAL: Th
 Return ONLY the corrected code.
 `;
 
-  const model = genAI.getGenerativeModel({ model: modelName });
+  const model = genAI.getGenerativeModel({
+    model: modelName,
+    generationConfig: {
+      temperature: TEMPERATURES.logic,
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.smallJson
+    }
+  });
 
   // Optimize for speed: Frontend handles high-level retries.
   // Backend should fail fast so UI can show "Retrying..." state.

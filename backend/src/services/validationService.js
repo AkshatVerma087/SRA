@@ -1,5 +1,7 @@
 import { analyzeText } from "./aiService.js";
 import crypto from 'crypto';
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from "../utils/llmGenerationConfig.js";
+import { stringifyForPrompt } from "../utils/promptCompaction.js";
 
 const VALIDATION_PROMPT_TEMPLATE = `
 <role>
@@ -146,11 +148,12 @@ async function filterFalsePositives(issues) {
   if (!issues || issues.length === 0) return issues;
 
   try {
-    const issuesJson = JSON.stringify(issues.map(i => ({ title: i.title, description: i.description })), null, 2);
+    const issuesJson = stringifyForPrompt(issues.map(i => ({ title: i.title, description: i.description })));
     const response = await analyzeText(issuesJson, {
       modelName: process.env.GEMINI_MODEL_NAME || 'gemini-2.5-flash',
-      systemPrompt: FILTER_PROMPT_TEMPLATE.replace('{{issues}}', issuesJson),
-      temperature: 0.0,
+      systemPrompt: FILTER_PROMPT_TEMPLATE.replace('{{issues}}', 'Issues are provided in the user input.'),
+      temperature: TEMPERATURES.logic,
+      maxOutputTokens: OUTPUT_TOKEN_LIMITS.smallJson,
       zodSchema: null
     });
 
@@ -175,12 +178,13 @@ async function filterFalsePositives(issues) {
 }
 
 export async function validateRequirements(srsData) {
-  const jsonString = JSON.stringify(srsData, null, 2);
+  const jsonString = stringifyForPrompt(srsData);
 
   const response = await analyzeText(jsonString, {
     modelName: process.env.GEMINI_MODEL_NAME || 'gemini-2.5-flash',
-    systemPrompt: VALIDATION_PROMPT_TEMPLATE.replace('{{srsData}}', jsonString),
-    temperature: 0.0,
+    systemPrompt: VALIDATION_PROMPT_TEMPLATE.replace('{{srsData}}', 'Project description data is provided in the user input.'),
+    temperature: TEMPERATURES.logic,
+    maxOutputTokens: OUTPUT_TOKEN_LIMITS.smallJson,
     zodSchema: null
   });
 
@@ -249,7 +253,7 @@ You are the Validation Gate Auto-Fixer.
 A gap was identified in the client's project description that would force the SRS generator to hallucinate. Your job is to rewrite the affected part of the description to CLOSE that gap — adding just enough specificity so the SRS generator can proceed without guessing.
 
 ## CONTEXT:
-Project Data: ${JSON.stringify(srsData.draftData)}
+Project Data: ${stringifyForPrompt(srsData.draftData)}
 Issue to Resolve: ${targetIssue.description}
 Suggested Fix: ${targetIssue.suggested_fix}
 
@@ -266,7 +270,8 @@ Suggested Fix: ${targetIssue.suggested_fix}
   const response = await analyzeText("Please fix the identified issue.", {
     systemPrompt: AUTO_FIX_PROMPT,
     modelName: process.env.GEMINI_MODEL_NAME || 'gemini-3-flash-preview',
-    temperature: 0.2,
+    temperature: TEMPERATURES.evaluator,
+    maxOutputTokens: OUTPUT_TOKEN_LIMITS.smallJson,
     zodSchema: null
   });
 

@@ -1,4 +1,6 @@
 import { BaseAgent } from '../agents/BaseAgent.js';
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from '../utils/llmGenerationConfig.js';
+import { stringifyForPrompt } from '../utils/promptCompaction.js';
 
 /**
  * RAG Evaluation Service (Simplified RAGAS)
@@ -50,15 +52,17 @@ Return ONLY a valid JSON object matching this schema. No markdown wrappers.
 
 <input>
 Context:
-${typeof context === 'string' ? context : JSON.stringify(context, null, 2)}
+${typeof context === 'string' ? context : stringifyForPrompt(context)}
 
 Generated Response:
-${typeof response === 'string' ? response : JSON.stringify(response, null, 2)}
+${typeof response === 'string' ? response : stringifyForPrompt(response)}
 </input>
 `;
 
         try {
-            const result = await this.callLLM(prompt, 0.2, true);
+            const result = await this.callLLM(prompt, TEMPERATURES.evaluator, true, null, 3, 5000, {
+                maxOutputTokens: OUTPUT_TOKEN_LIMITS.smallJson
+            });
             return result;
         } catch (error) {
             console.error("Evaluation Error:", error);

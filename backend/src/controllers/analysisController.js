@@ -12,6 +12,8 @@ import { ensureProjectExists } from '../services/projectService.js';
 import { findReuseCandidate } from '../services/reuseService.js';
 import { FEATURE_EXPANSION_PROMPT, DFD_STRUCT_GEN_PROMPT } from '../utils/prompts.js';
 import { layoutAllDFD } from '../services/dfdLayoutService.js';
+import { OUTPUT_TOKEN_LIMITS, TEMPERATURES } from '../utils/llmGenerationConfig.js';
+import { stringifyForPrompt } from '../utils/promptCompaction.js';
 import prisma from '../config/prisma.js';
 import crypto from 'crypto';
 import { successResponse } from '../utils/response.js';
@@ -827,13 +829,15 @@ export const expandFeature = async (req, res, next) => {
 
         // Prepare prompt
         const finalPrompt = FEATURE_EXPANSION_PROMPT
-            .replace('{{name}}', name)
-            .replace('{{prompt}}', prompt);
+            .replace('{{name}}', 'Provided in user input')
+            .replace('{{prompt}}', 'Provided in user input');
 
         // Call AI Service with clean system prompt and no SRS validation
-        const result = await analyzeText(req.body.prompt || "", {
+        const result = await analyzeText(`Feature Name: ${name}\nDescription/Prompt: ${prompt}`, {
             ...settings,
             systemPrompt: finalPrompt,
+            temperature: TEMPERATURES.developer,
+            maxOutputTokens: OUTPUT_TOKEN_LIMITS.mediumJson,
             zodSchema: null
         });
 
@@ -882,19 +886,14 @@ export const generateDFD = async (req, res, next) => {
         }
 
         // Prepare prompt
-        const finalPrompt = `
-${DFD_STRUCT_GEN_PROMPT.replaceAll('{{projectName}}', projectName)}
-
-USER INPUT:
-Project Name: ${projectName}
-Description: ${description}
-SRS Content (Reference): ${srsContent || "N/A"}
-`;
+        const finalPrompt = DFD_STRUCT_GEN_PROMPT.replaceAll('{{projectName}}', projectName);
 
         // Call AI Service with clean system prompt and no SRS validation
-        const result = await analyzeText(`Project: ${projectName}\nDescription: ${description}`, {
+        const result = await analyzeText(`Project: ${projectName}\nDescription: ${description}\nSRS Content Reference: ${stringifyForPrompt(srsContent || "N/A", 12000)}`, {
             ...settings,
             systemPrompt: finalPrompt,
+            temperature: TEMPERATURES.architect,
+            maxOutputTokens: OUTPUT_TOKEN_LIMITS.architectSection,
             zodSchema: null
         });
 
